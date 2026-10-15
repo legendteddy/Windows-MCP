@@ -599,6 +599,40 @@ openssl req -x509 -newkey rsa:4096 \
   -days 365 -nodes
 ```
 
+### Desktop control
+
+Desktop control is enabled by default. To run background tasks while using the
+computer yourself, disable it in `~/.windows-mcp/config.toml`:
+
+```toml
+[control]
+enabled = false
+idle_timeout_seconds = 10.0
+```
+
+Or override it for one MCP server launch:
+
+```shell
+windows-mcp serve --no-control
+windows-mcp serve --control --control-idle-timeout 3
+```
+
+In your MCP client's launch arguments, put these options after `serve`.
+The priority is CLI > environment variable > TOML > default. `--control` can
+explicitly override `enabled = false`. The timeout accepts finite positive seconds
+(including fractions); zero does not disable control. The default remains 10 seconds.
+
+Restart the Windows-MCP server process after changing these settings. There is no
+hot reload or AI configuration tool. `ControlStatus` reports the effective `enabled`
+and `idle_timeout_seconds` values, with state `disabled` when control is off.
+
+Disabling control turns off ownership gating, physical input protection, takeover
+monitoring, and the control indicator. Tools remain available and serialized, with
+injected key/button cleanup retained. AI desktop actions can then interfere with your
+own input; PowerShell scripts can also operate the UI. The separate screenshot flash
+setting is unchanged. When control is enabled, the idle timer restarts with physical
+input, so shortening it does not allow background calls while you keep using the computer.
+
 ### `auth` Helper
 
 Generate an auth key and save a working config to `~/.windows-mcp/config.toml`:
@@ -632,6 +666,40 @@ All variables are optional unless noted. Set them via the `env` key in `claude_d
 | `WINDOWS_MCP_SCREENSHOT_BACKEND` | `auto` | Screenshot capture backend. Accepted values: `auto` (tries dxcam → mss → pillow in order), `dxcam`, `mss`, `pillow`. Use `mss` or `pillow` if `dxcam` is unavailable or causes issues on your GPU. |
 | `WINDOWS_MCP_PROFILE_SNAPSHOT` | _(disabled)_ | Set to `1`, `true`, `yes`, or `on` to emit per-stage timing logs for Screenshot/Snapshot calls. Useful for diagnosing slow captures. |
 | `WINDOWS_MCP_DISABLE_FLASH` | _(disabled)_ | Set to `1`, `true`, `yes`, or `on` to suppress the orange-red glowing border that briefly highlights the captured area after every screenshot. The flash is rendered on a transparent always-on-top window *after* capture so it never appears in the captured image. |
+
+### Excluding processes from UI Automation traversal
+
+| Variable | Default | Description |
+|---|---|---|
+| `WINDOWS_MCP_EXCLUDE_PROCESSES` | _(none)_ | Comma-separated process basenames whose windows are excluded from UI Automation tree traversal, e.g. `Code.exe,Cursor.exe`. Matching is case-insensitive and exact — no wildcards or regular expressions. Unset or empty preserves current behaviour. |
+
+Some applications expose accessibility trees that can become slow or unresponsive during UI Automation traversal. `Snapshot` and `WaitFor` may traverse the active window and other top-level handles selected for tree capture, so one pathological accessibility provider can stall the capture.
+
+Set:
+
+```text
+WINDOWS_MCP_EXCLUDE_PROCESSES=Code.exe,Cursor.exe
+```
+
+Process names are comma-separated executable basenames. They are matched case-insensitively after surrounding whitespace is stripped; empty entries are ignored and duplicates are harmless.
+
+A window is excluded *before* any UI Automation call is made against it, so its accessibility provider is never entered. Excluded applications may still appear in the window list, but Windows-MCP will not traverse their accessibility trees, and they are not reported as failed captures. If the owning process of a window cannot be resolved, the window is traversed as usual.
+
+This is an exclusion mechanism — a mitigation, not a complete fix for every form of [#383](https://github.com/CursorTouch/Windows-MCP/issues/383). It only skips the processes you name; a pathological window you have not listed can still stall a capture.
+
+### Desktop control settings
+
+If a physical key/button release event is missed, the input monitor checks residual
+holds after the configured idle wait. Five consecutive all-released samples, at
+least 100 ms apart, clear the stale records. New physical input or a reported held
+key/button resets confirmation. This is best-effort: a zero `GetAsyncKeyState`
+result counts as released even when Windows cannot provide the state; repeated
+sampling filters transient readings but cannot distinguish persistent query failure.
+
+| Variable | Default | Description |
+|---|---|---|
+| `WINDOWS_MCP_CONTROL` | `true` | Enable desktop control coordination. Set to `false` to disable. Equivalent to `--control/--no-control`; restart required. |
+| `WINDOWS_MCP_CONTROL_IDLE_TIMEOUT` | `10.0` | Finite positive idle wait in seconds. Equivalent to `--control-idle-timeout`; restart required. |
 
 ### Security
 
