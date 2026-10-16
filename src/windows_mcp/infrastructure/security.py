@@ -16,6 +16,12 @@ from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 from urllib3.poolmanager import PoolManager
 
 
+_FAKE_IP_BENCHMARK_NETWORKS = (
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("2001:2::/48"),
+)
+
+
 def _is_private_target(ip: ipaddress._BaseAddress) -> bool:
     return any((
         ip.is_private,
@@ -25,6 +31,18 @@ def _is_private_target(ip: ipaddress._BaseAddress) -> bool:
         ip.is_reserved,
         ip.is_unspecified,
     ))
+
+
+def _is_fake_ip_benchmark(ip: ipaddress._BaseAddress) -> bool:
+    return any(ip in network for network in _FAKE_IP_BENCHMARK_NETWORKS)
+
+
+def _is_ip_literal(hostname: str) -> bool:
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return True
 
 
 def validate_url(url: str, *, allow_private: bool = False) -> str | None:
@@ -64,12 +82,21 @@ def validate_url(url: str, *, allow_private: bool = False) -> str | None:
     except socket.gaierror as exc:
         raise ValueError(f"Could not resolve hostname '{parsed.hostname}': {exc}") from exc
 
+    hostname_is_literal = _is_ip_literal(parsed.hostname)
     for raw_addr in addresses:
         try:
             ip = ipaddress.ip_address(raw_addr)
         except ValueError:
             raise ValueError(f"Could not validate resolved address: {raw_addr}")
         if _is_private_target(ip):
+            if not hostname_is_literal and _is_fake_ip_benchmark(ip):
+                raise ValueError(
+                    f"Hostname '{parsed.hostname}' resolved to blocked benchmark-range address "
+                    f"{ip}. This can indicate proxy or VPN Fake-IP DNS. The address remains "
+                    "blocked by SSRF protection; configure the proxy or DNS service to return "
+                    "the public address for this hostname, for example by adding it to a "
+                    "Fake-IP exclusion list."
+                )
             raise ValueError(
                 f"Private, loopback, link-local, multicast, and reserved addresses are blocked: {ip}"
             )
